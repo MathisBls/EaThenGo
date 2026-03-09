@@ -1,0 +1,378 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── MULTI-TENANT ────────────────────────────────
+
+model Establishment {
+  id              String            @id @default(cuid())
+  slug            String            @unique
+  name            String
+  description     String?           @db.Text
+  type            EstablishmentType
+  logoUrl         String?
+  bannerUrl       String?
+  address         String
+  city            String
+  zipCode         String
+  country         String            @default("FR")
+  lat             Float?
+  lng             Float?
+  phone           String?
+  email           String
+  website         String?
+  siret           String?           @unique
+  stripeAccountId String?           @unique
+  isActive        Boolean           @default(false)
+  isVerified      Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  // Relations
+  owner        User              @relation("EstablishmentOwner", fields: [ownerId], references: [id])
+  ownerId      String
+  staff        StaffMember[]
+  openingHours OpeningHours[]
+  categories   Category[]
+  products     Product[]
+  menus        Menu[]
+  orders       Order[]
+  pickupSlots  PickupSlotConfig[]
+  reviews      Review[]
+
+  @@index([city, type, isActive])
+  @@index([slug])
+}
+
+enum EstablishmentType {
+  RESTAURANT
+  BAKERY
+  BUTCHER
+  GROCERY
+  FLORIST
+  OTHER
+}
+
+model StaffMember {
+  id              String        @id @default(cuid())
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  user            User          @relation(fields: [userId], references: [id])
+  userId          String
+  role            StaffRole     @default(STAFF)
+  createdAt       DateTime      @default(now())
+
+  @@unique([establishmentId, userId])
+}
+
+enum StaffRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+// ─── USERS ───────────────────────────────────────
+
+model User {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  emailVerified    DateTime?
+  passwordHash     String?
+  name             String?
+  phone            String?
+  avatarUrl        String?
+  role             UserRole  @default(CUSTOMER)
+  stripeCustomerId String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  ownedEstablishments Establishment[] @relation("EstablishmentOwner")
+  staffMemberships    StaffMember[]
+  orders              Order[]
+  addresses           Address[]
+  reviews             Review[]
+  accounts            Account[]
+  sessions            Session[]
+}
+
+enum UserRole {
+  CUSTOMER
+  MERCHANT
+  ADMIN
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Address {
+  id        String  @id @default(cuid())
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  label     String?
+  street    String
+  city      String
+  zipCode   String
+  country   String  @default("FR")
+  isDefault Boolean @default(false)
+}
+
+// ─── CATALOGUE ───────────────────────────────────
+
+model Category {
+  id              String        @id @default(cuid())
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  name            String
+  description     String?
+  imageUrl        String?
+  sortOrder       Int           @default(0)
+  isActive        Boolean       @default(true)
+  products        Product[]
+  menuSections    MenuSection[]
+
+  @@index([establishmentId, sortOrder])
+}
+
+model Product {
+  id              String         @id @default(cuid())
+  establishment   Establishment  @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  categoryId      String?
+  name            String
+  description     String?        @db.Text
+  price           Int            // centimes
+  compareAtPrice  Int?
+  imageUrl        String?
+  images          ProductImage[]
+  allergens       String[]
+  tags            String[]
+  isAvailable     Boolean        @default(true)
+  isActive        Boolean        @default(true)
+  sortOrder       Int            @default(0)
+  preparationTime Int?
+  options         OptionGroup[]
+  menuItems       MenuItem[]
+  orderItems      OrderItem[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([establishmentId, categoryId, isActive])
+  @@index([establishmentId, isAvailable])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+}
+
+model OptionGroup {
+  id        String     @id @default(cuid())
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  productId String
+  name      String
+  type      OptionType @default(SINGLE)
+  required  Boolean    @default(false)
+  minSelect Int        @default(0)
+  maxSelect Int        @default(1)
+  options   Option[]
+  sortOrder Int        @default(0)
+}
+
+enum OptionType {
+  SINGLE
+  MULTIPLE
+}
+
+model Option {
+  id            String      @id @default(cuid())
+  group         OptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  optionGroupId String
+  name          String
+  priceModifier Int         @default(0)
+  isDefault     Boolean     @default(false)
+  isAvailable   Boolean     @default(true)
+  sortOrder     Int         @default(0)
+}
+
+// ─── MENUS / FORMULES ────────────────────────────
+
+model Menu {
+  id              String        @id @default(cuid())
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  name            String
+  description     String?
+  price           Int
+  imageUrl        String?
+  isActive        Boolean       @default(true)
+  sortOrder       Int           @default(0)
+  sections        MenuSection[]
+  orderItems      OrderItem[]
+
+  @@index([establishmentId, isActive])
+}
+
+model MenuSection {
+  id         String     @id @default(cuid())
+  menu       Menu       @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  menuId     String
+  name       String
+  category   Category?  @relation(fields: [categoryId], references: [id])
+  categoryId String?
+  required   Boolean    @default(true)
+  maxSelect  Int        @default(1)
+  items      MenuItem[]
+  sortOrder  Int        @default(0)
+}
+
+model MenuItem {
+  id            String      @id @default(cuid())
+  section       MenuSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  sectionId     String
+  product       Product     @relation(fields: [productId], references: [id])
+  productId     String
+  priceOverride Int?
+  sortOrder     Int         @default(0)
+}
+
+// ─── COMMANDES ───────────────────────────────────
+
+model Order {
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique
+  establishment   Establishment @relation(fields: [establishmentId], references: [id])
+  establishmentId String
+  customer        User?       @relation(fields: [customerId], references: [id])
+  customerId      String?
+  guestEmail      String?
+  guestName       String?
+  guestPhone      String?
+  status          OrderStatus @default(PENDING)
+  items           OrderItem[]
+  subtotal        Int
+  serviceFee      Int         @default(0)
+  total           Int
+  note            String?     @db.Text
+  pickupTime      DateTime
+  pickupCode      String?
+  stripePaymentIntentId String? @unique
+  stripeSessionId       String? @unique
+  paidAt          DateTime?
+  preparedAt      DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([establishmentId, status, createdAt])
+  @@index([customerId, createdAt])
+  @@index([orderNumber])
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId     String
+  product     Product? @relation(fields: [productId], references: [id])
+  productId   String?
+  menu        Menu?    @relation(fields: [menuId], references: [id])
+  menuId      String?
+  name        String
+  quantity    Int
+  unitPrice   Int
+  totalPrice  Int
+  options     Json?
+  menuChoices Json?
+}
+
+// ─── CRÉNEAUX DE RETRAIT ─────────────────────────
+
+model PickupSlotConfig {
+  id              String        @id @default(cuid())
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  dayOfWeek       Int
+  startTime       String
+  endTime         String
+  slotDuration    Int           @default(15)
+  maxOrders       Int           @default(5)
+  isActive        Boolean       @default(true)
+
+  @@index([establishmentId, dayOfWeek])
+}
+
+model OpeningHours {
+  id              String        @id @default(cuid())
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  dayOfWeek       Int
+  openTime        String
+  closeTime       String
+  isClosed        Boolean       @default(false)
+
+  @@index([establishmentId])
+}
+
+// ─── AVIS ────────────────────────────────────────
+
+model Review {
+  id              String        @id @default(cuid())
+  establishment   Establishment @relation(fields: [establishmentId], references: [id], onDelete: Cascade)
+  establishmentId String
+  customer        User          @relation(fields: [customerId], references: [id])
+  customerId      String
+  order           String?
+  rating          Int
+  comment         String?       @db.Text
+  reply           String?       @db.Text
+  repliedAt       DateTime?
+  isVisible       Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+
+  @@unique([establishmentId, customerId, order])
+  @@index([establishmentId, isVisible, createdAt])
+}
